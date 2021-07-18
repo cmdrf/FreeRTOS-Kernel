@@ -103,7 +103,7 @@ at the top of this file. */
 .global xPortStartFirstTask
 .global freertos_risc_v_trap_handler
 .global pxPortInitialiseStack
-.extern pxCurrentTCB
+.extern pxCurrentTCBs
 .extern ulPortTrapHandler
 .extern vTaskSwitchContext
 .extern xTaskIncrementTick
@@ -111,9 +111,9 @@ at the top of this file. */
 .extern pullMachineTimerCompareRegister
 .extern pullNextTime
 .extern uxTimerIncrementsForOneTick /* size_t type so 32-bit on 32-bit core and 64-bits on 64-bit core. */
-.extern xISRStackTop
+.extern xISRStackTops
 .extern portasmHANDLE_INTERRUPT
-.extern ulIsrEnterCount
+.extern ulIsrEnterCounts
 
 /*-----------------------------------------------------------*/
 
@@ -165,28 +165,41 @@ test_if_asynchronous:
 	store_x a1, 0( sp )					/* Asynch so save unmodified exception return address. */
 
 	/* ulIsrEnterCount++: */
-	la t0, ulIsrEnterCount				/* t0 = &ulIsrEnterCount */
+	csrr t3, mhartid					/* t3 = mhartid */
+	la t0, ulIsrEnterCounts				/* t0 = ulIsrEnterCounts */
+	slli t1, t3, 2						/* t1 = t3 << 2 <=> t1 = t3 * 4. There is no immediate mode multiplication btw. */
+	add t0, t0, t1						/* t0 += t1 */
 	lw t1, 0(t0)						/* t1 = *t0 */
 	addi t2, t1, 1						/* t2 = t1 + 1 */
 	sw t2, 0(t0)						/* *t0 = t2 */
 	bnez t1, 2f							/* If the interrupt is not nesting: */
-	load_x  t0, pxCurrentTCB			/* Load pxCurrentTCB. */
-	store_x  sp, 0( t0 )				/* Write sp to first TCB member. */
-	load_x sp, xISRStackTop				/* Switch to ISR stack before function call. */
+	la t0, pxCurrentTCBs				/* Load pxCurrentTCBs. */
+	li t1, portWORD_SIZE
+	mul t2, t1, t3						/* Set t2 to core ID multiplied by word size */
+	add t0, t0, t2						/* Add core ID multiplied by word size to pxCurrentTCBs address. */
+	load_x t1, 0( t0 )					/* Dereference selected pxCurrentTCBs array element */
+	store_x  sp, 0( t1 )				/* Write sp to first TCB member. */
+	la t0, xISRStackTops
+	add t0, t0, t2
+	load_x sp, 0(t0)					/* Switch to ISR stack before function call. */
 2:
 	bgez a0, handle_synchronous			/* Branch past interrupt handing if not asynchronous. */
 
 
 handle_asynchronous:
+	addi t0, x0, 1
+	slli t0, t0, __riscv_xlen - 1   /* LSB is already set, shift into MSB.  Shift 31 on 32-bit or 63 on 64-bit cores. */
+	addi t1, t0, 3					/* 0x8000[]0003 == inter-processor interrupt. */
+	bne a0, t1, test_if_mtimer
+	csrr a0, mhartid				/* vTaskSwitchContext takes core ID as parameter */
+	jal vTaskSwitchContext
+	j processed_source
 
-#if( portasmHAS_MTIME != 0 )
+test_if_mtimer:						/* If there is a CLINT then the mtimer is used to generate the tick interrupt. */
 
-	test_if_mtimer:						/* If there is a CLINT then the mtimer is used to generate the tick interrupt. */
+#if( portasmHAS_MTIME != 0 )			
 
-		addi t0, x0, 1
-
-		slli t0, t0, __riscv_xlen - 1   /* LSB is already set, shift into MSB.  Shift 31 on 32-bit or 63 on 64-bit cores. */
-		addi t1, t0, 7					/* 0x8000[]0007 == machine timer interrupt. */
+		addi t1, t1, 4					/* 0x8000[]0007 == machine timer interrupt. */
 		bne a0, t1, test_if_external_interrupt
 
 		load_x t0, pullMachineTimerCompareRegister  /* Load address of compare register into t0. */
@@ -223,6 +236,7 @@ handle_asynchronous:
 
 		jal xTaskIncrementTick
 		beqz a0, processed_source		/* Don't switch context if incrementing tick didn't unblock a task. */
+		csrr a0, mhartid				/* vTaskSwitchContext takes core ID as parameter */
 		jal vTaskSwitchContext
 		j processed_source
 
@@ -239,6 +253,7 @@ handle_synchronous:
 test_if_environment_call:
 	li t0, 11 							/* 11 == environment call. */
 	bne a0, t0, is_exception			/* Not an M environment call, so some other exception. */
+	csrr a0, mhartid					/* vTaskSwitchContext takes core ID as parameter */
 	jal vTaskSwitchContext
 	j processed_source
 
@@ -253,13 +268,20 @@ as_yet_unhandled:
 	j as_yet_unhandled
 
 processed_source:
+	csrr t3, mhartid					/* t3 = mhartid */
 	/* ulIsrEnterCount--: */
-	la t0, ulIsrEnterCount				/* t0 = &ulIsrEnterCount */
+	la t0, ulIsrEnterCounts				/* t0 = ulIsrEnterCounts */
+	slli t1, t3, 2						/* t1 = t3 << 2 <=> t1 = t3 * 4. There is no immediate mode multiplication btw. */
+	add t0, t0, t1						/* t0 += t1 */
 	lw t1, 0(t0)						/* t1 = *t0 */
 	addi t1, t1, -1						/* t1-- */
 	sw t1, 0(t0)						/* *t0 = t1 */
 	bnez t1, 1f							/* If we are going to exit from ISR on the last (or only) nesting level: */
-	load_x  t1, pxCurrentTCB			/* Load pxCurrentTCB. */
+	la t0, pxCurrentTCBs				/* Load pxCurrentTCBs. */
+	li t1, portWORD_SIZE
+	mul t2, t1, t3						/* Set t2 to core ID multiplied by word size */
+	add t0, t0, t2						/* Add core ID multiplied by word size to pxCurrentTCBs address. */
+	load_x t1, 0( t0 )					/* Dereference selected pxCurrentTCBs array element */
 	load_x  sp, 0( t1 )				 	/* Read sp from first TCB member. */
 1:
 	/* Load mret with the address of the next instruction in the task to run next. */
@@ -318,8 +340,13 @@ xPortStartFirstTask:
 	csrw mtvec, t0
 #endif /* portasmHAS_CLILNT */
 
-	load_x  sp, pxCurrentTCB			/* Load pxCurrentTCB. */
-	load_x  sp, 0( sp )				 	/* Read sp from first TCB member. */
+	csrr t3, mhartid					/* t3 = mhartid */
+	la t0, pxCurrentTCBs				/* Load pxCurrentTCBs. */
+	li t1, portWORD_SIZE
+	mul t2, t1, t3						/* Set t2 to core ID multiplied by word size */
+	add t0, t0, t2						/* Add core ID multiplied by word size to pxCurrentTCBs address. */
+	load_x t1, 0( t0 )					/* Dereference selected pxCurrentTCBs array element */
+	load_x  sp, 0( t1 )				 	/* Read sp from first TCB member. */
 
 	load_x  x1, 0( sp ) /* Note for starting the scheduler the exception return address is used as the function return address. */
 

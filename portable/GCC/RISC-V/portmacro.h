@@ -33,6 +33,12 @@
 extern "C" {
 #endif
 
+/* Kendryte SDK: */
+#include <entry.h>
+#include <bsp/include/atomic.h>
+#include <clint.h>
+
+/* Std: */
 #include <stdint.h>
 
 /*-----------------------------------------------------------
@@ -85,15 +91,29 @@ not need to be guarded with a critical section. */
 	#define portBYTE_ALIGNMENT			16
 /*-----------------------------------------------------------*/
 
+/* SMP: */
+extern uint32_t ulIsrEnterCounts[];
+extern corelock_t xTaskLock;
+extern corelock_t xIsrLock;
+BaseType_t xPortGetCoreId( void );
+#define portRESTORE_INTERRUPTS(x) do{ if(x) { __asm volatile( "csrs mstatus, 8" ); } else { __asm volatile( "csrc mstatus, 8" ); } }while(0)
+#define portGET_CORE_ID() xPortGetCoreId()
+#define portYIELD_CORE(core) clint_ipi_send(core)
+#define xPortIsInsideInterrupt() (ulIsrEnterCounts[ portGET_CORE_ID() ] > 0)
+#define portCHECK_IF_IN_ISR() xPortIsInsideInterrupt()
+#define portGET_TASK_LOCK() corelock_lock(&xTaskLock)
+#define portRELEASE_TASK_LOCK() corelock_unlock(&xTaskLock)
+#define portGET_ISR_LOCK() corelock_lock(&xIsrLock)
+#define portRELEASE_ISR_LOCK() corelock_unlock(&xIsrLock)
+#define portTIMER_CALLBACK_ATTRIBUTE
+/*-----------------------------------------------------------*/
 
 /* Scheduler utilities. */
-extern void vTaskSwitchContext( void );
-#define portYIELD() __asm volatile( "ecall" );
-#define portEND_SWITCHING_ISR( xSwitchRequired ) if( xSwitchRequired ) vTaskSwitchContext()
+extern void vTaskSwitchContext( BaseType_t xCoreID );
+//#define portYIELD() __asm volatile( "ecall" );
+#define portYIELD() portYIELD_CORE(portGET_CORE_ID())
+#define portEND_SWITCHING_ISR( xSwitchRequired ) if( xSwitchRequired ) vTaskSwitchContext(portGET_CORE_ID())
 #define portYIELD_FROM_ISR( x ) portEND_SWITCHING_ISR( x )
-
-extern uint32_t ulIsrEnterCount;
-#define xPortIsInsideInterrupt() (ulIsrEnterCount > 0)
 /*-----------------------------------------------------------*/
 
 
@@ -101,10 +121,13 @@ extern uint32_t ulIsrEnterCount;
 #define portCRITICAL_NESTING_IN_TCB					1
 extern void vTaskEnterCritical( void );
 extern void vTaskExitCritical( void );
+UBaseType_t uxPortDisableInterrupts( void );
+UBaseType_t uxPortSetInterruptMaskFromIsr( void );
+void uxPortClearInterruptMaskFromIsr(UBaseType_t x);
 
-#define portSET_INTERRUPT_MASK_FROM_ISR() 0
-#define portCLEAR_INTERRUPT_MASK_FROM_ISR( uxSavedStatusValue ) ( void ) uxSavedStatusValue
-#define portDISABLE_INTERRUPTS()	__asm volatile( "csrc mstatus, 8" )
+#define portSET_INTERRUPT_MASK_FROM_ISR uxPortSetInterruptMaskFromIsr
+#define portCLEAR_INTERRUPT_MASK_FROM_ISR uxPortClearInterruptMaskFromIsr
+#define portDISABLE_INTERRUPTS()	uxPortDisableInterrupts()
 #define portENABLE_INTERRUPTS()		__asm volatile( "csrs mstatus, 8" )
 #define portENTER_CRITICAL()	vTaskEnterCritical()
 #define portEXIT_CRITICAL()		vTaskExitCritical()
@@ -175,8 +198,6 @@ definition is found. */
 #elif !defined( configMTIME_BASE_ADDRESS ) || !defined( configMTIMECMP_BASE_ADDRESS )
 	#error configMTIME_BASE_ADDRESS and configMTIMECMP_BASE_ADDRESS must be defined in FreeRTOSConfig.h.  Set them to zero if there is no MTIME (machine time) clock.  See https://www.FreeRTOS.org/Using-FreeRTOS-on-RISC-V.html
 #endif
-
-
 
 #ifdef __cplusplus
 }

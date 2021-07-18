@@ -66,14 +66,22 @@ of the stack used by main.  Using the linker script method will repurpose the
 stack that was used by main before the scheduler was started for use as the
 interrupt stack after the scheduler has started. */
 #ifdef configISR_STACK_SIZE_WORDS
-	static __attribute__ ((aligned(16))) StackType_t xISRStack[ configISR_STACK_SIZE_WORDS ] = { 0 };
-	const StackType_t xISRStackTop = ( StackType_t ) &( xISRStack[ configISR_STACK_SIZE_WORDS & ~portBYTE_ALIGNMENT_MASK ] );
+	static __attribute__ ((aligned(16))) StackType_t xISRStacks[ configNUM_CORES ][ configISR_STACK_SIZE_WORDS ] = { 0 };
+	const StackType_t xISRStackTops[ configNUM_CORES ] = {
+		( StackType_t ) &( xISRStacks[ 0 ][ configISR_STACK_SIZE_WORDS & ~portBYTE_ALIGNMENT_MASK ] ),
+		( StackType_t ) &( xISRStacks[ 1 ][ configISR_STACK_SIZE_WORDS & ~portBYTE_ALIGNMENT_MASK ] )
+#if configNUM_CORES != 2
+#error TODO
+#endif
+	};
+
 
 	/* Don't use 0xa5 as the stack fill bytes as that is used by the kernerl for
 	the task stacks, and so will legitimately appear in many positions within
 	the ISR stack. */
 	#define portISR_STACK_FILL_BYTE	0xee
 #else
+#error Not yet supported on SMP
 	extern const uint32_t __freertos_irq_stack_top[];
 	const StackType_t xISRStackTop = ( StackType_t ) __freertos_irq_stack_top;
 #endif
@@ -96,7 +104,10 @@ volatile uint64_t * pullMachineTimerCompareRegister = NULL;
 
 /* Counts the number of times the interrupt service routine was entered, but not
 exited. Used for interrupt nesting and xPortIsInsideInterrupt(). */
-uint32_t ulIsrEnterCount = 0;
+uint32_t ulIsrEnterCounts[configNUM_CORES] = { 0 };
+
+corelock_t xTaskLock = CORELOCK_INIT;
+corelock_t xIsrLock = CORELOCK_INIT;
 
 /* Set configCHECK_FOR_STACK_OVERFLOW to 3 to add ISR stack checking to task
 stack checking.  A problem in the ISR stack will trigger an assert, not call the
@@ -155,6 +166,12 @@ BaseType_t xPortStartScheduler( void )
 {
 extern void xPortStartFirstTask( void );
 
+	BaseType_t core = xPortGetCoreId();
+
+	if(core == 0)
+		register_core1((core_function)xPortStartScheduler, NULL);
+
+
 	#if( configASSERT_DEFINED == 1 )
 	{
 		volatile uint32_t mtvec = 0;
@@ -167,11 +184,11 @@ extern void xPortStartFirstTask( void );
 		/* Check alignment of the interrupt stack - which is the same as the
 		stack that was being used by main() prior to the scheduler being
 		started. */
-		configASSERT( ( xISRStackTop & portBYTE_ALIGNMENT_MASK ) == 0 );
+		configASSERT( ( xISRStackTops[core] & portBYTE_ALIGNMENT_MASK ) == 0 );
 
 		#ifdef configISR_STACK_SIZE_WORDS
 		{
-			memset( ( void * ) xISRStack, portISR_STACK_FILL_BYTE, sizeof( xISRStack ) );
+			memset( ( void * ) xISRStacks[core], portISR_STACK_FILL_BYTE, sizeof( xISRStacks[core] ) );
 		}
 		#endif	 /* configISR_STACK_SIZE_WORDS */
 	}
@@ -203,6 +220,43 @@ extern void xPortStartFirstTask( void );
 	return pdFAIL;
 }
 /*-----------------------------------------------------------*/
+
+BaseType_t xPortGetCoreId( void )
+{
+BaseType_t core;
+
+	asm volatile("csrr %0, mhartid;"
+				 : "=r"(core));
+
+	return core;
+}
+
+UBaseType_t uxPortDisableInterrupts( void )
+{
+	UBaseType_t prev_enabled;
+	UBaseType_t new_enable = 8;  /* timer and external */
+	__asm volatile ("csrrc %0, mstatus, %1"  /* read and write atomically */
+						 : "=r" (prev_enabled) /* output: register %0 */
+						 : "r" (new_enable)  /* input: register %1 */
+						 : /* clobbers: none */);
+	return prev_enabled & 8;
+}
+
+UBaseType_t uxPortSetInterruptMaskFromIsr( void )
+{
+	UBaseType_t mstatus = uxPortDisableInterrupts();
+	vTaskEnterCritical();
+	return mstatus;
+}
+
+void uxPortClearInterruptMaskFromIsr(UBaseType_t x)
+{
+	vTaskExitCritical();
+	if(x)
+		__asm volatile( "csrs mstatus, 8" );
+	else
+		__asm volatile( "csrc mstatus, 8" );
+}
 
 void vPortEndScheduler( void )
 {
