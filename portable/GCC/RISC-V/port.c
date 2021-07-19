@@ -247,19 +247,23 @@ UBaseType_t uxPortDisableInterrupts( void )
 
 UBaseType_t uxPortSetInterruptMaskFromIsr( void )
 {
-	UBaseType_t mstatus = uxPortDisableInterrupts();
+	UBaseType_t prev_enabled;
+	UBaseType_t newClear = 0x888;  /* timer and external */
+	__asm volatile ("csrrc %0, mie, %1"  /* read and write atomically */
+						 : "=r" (prev_enabled) /* output: register %0 */
+						 : "r" (newClear)  /* input: register %1 */
+						 : /* clobbers: none */);
 	vTaskEnterCritical();
-	return mstatus;
+	return prev_enabled & 0x888;
 }
 
 void uxPortClearInterruptMaskFromIsr(UBaseType_t x)
 {
 	vTaskExitCritical();
-	if(x)
-		__asm volatile( "csrs mstatus, 8" );
-	else
-		__asm volatile( "csrc mstatus, 8" );
-}
+	__asm volatile ("csrrs zero, mie, %0"
+						 : /* output: none */
+						 : "r" (x)  /* input : register */
+						 : /* clobbers: none */);}
 
 void vPortEndScheduler( void )
 {
