@@ -213,6 +213,9 @@ extern void xPortStartFirstTask( void );
 	}
 	#endif /* ( configMTIME_BASE_ADDRESS != 0 ) && ( configMTIMECMP_BASE_ADDRESS != 0 ) */
 
+	/* Enable software interrupts for core yield: */
+	__asm volatile( "csrs mie, %0" :: "r"(0x008) );
+
 	xPortStartFirstTask();
 
 	/* Should not get here as after calling xPortStartFirstTask() only tasks
