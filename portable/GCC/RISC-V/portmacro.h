@@ -36,7 +36,6 @@ extern "C" {
 /* Kendryte SDK: */
 #include <entry.h>
 #include <bsp/include/atomic.h>
-#include <clint.h>
 
 /* Std: */
 #include <stdint.h>
@@ -96,9 +95,10 @@ extern uint32_t ulIsrEnterCounts[];
 extern corelock_t xTaskLock;
 extern corelock_t xIsrLock;
 BaseType_t xPortGetCoreId( void );
+void vPortYieldCore( int core );
 #define portRESTORE_INTERRUPTS(x) do{ if(x) { __asm volatile( "csrs mstatus, 8" ); } else { __asm volatile( "csrc mstatus, 8" ); } }while(0)
 #define portGET_CORE_ID() xPortGetCoreId()
-#define portYIELD_CORE(core) clint_ipi_send(core)
+#define portYIELD_CORE(core) vPortYieldCore(core)
 #define xPortIsInsideInterrupt() (ulIsrEnterCounts[ portGET_CORE_ID() ] > 0)
 #define portCHECK_IF_IN_ISR() xPortIsInsideInterrupt()
 #define portGET_TASK_LOCK() corelock_lock(&xTaskLock)

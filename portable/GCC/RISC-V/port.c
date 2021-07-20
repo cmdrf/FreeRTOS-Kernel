@@ -97,10 +97,9 @@ void vPortSetupTimerInterrupt( void ) __attribute__(( weak ));
 
 /* Used to program the machine timer compare register. */
 uint64_t ullNextTime = 0ULL;
-const uint64_t *pullNextTime = &ullNextTime;
 const size_t uxTimerIncrementsForOneTick = ( size_t ) ( ( configCPU_CLOCK_HZ ) / ( configTICK_RATE_HZ ) ); /* Assumes increment won't go over 32-bits. */
-uint32_t const ullMachineTimerCompareRegisterBase = configMTIMECMP_BASE_ADDRESS;
-volatile uint64_t * pullMachineTimerCompareRegister = NULL;
+volatile uint64_t * pullMachineTimerCompareRegister = ( uint64_t * )configMTIMECMP_BASE_ADDRESS;
+volatile uint32_t * pullMachineSoftwareInterruptRegisters = ( uint32_t * )configCLINT_SIP_BASE_ADDRESS;
 
 /* Counts the number of times the interrupt service routine was entered, but not
 exited. Used for interrupt nesting and xPortIsInsideInterrupt(). */
@@ -141,7 +140,6 @@ task stack, not the ISR stack). */
 	volatile uint32_t ulHartId;
 
 		__asm volatile( "csrr %0, mhartid" : "=r"( ulHartId ) );
-		pullMachineTimerCompareRegister  = ( volatile uint64_t * ) ( ullMachineTimerCompareRegisterBase + ( ulHartId * sizeof( uint64_t ) ) );
 
 		do
 		{
@@ -232,6 +230,11 @@ BaseType_t core;
 				 : "=r"(core));
 
 	return core;
+}
+
+void vPortYieldCore( int core )
+{
+	pullMachineSoftwareInterruptRegisters[ core ] = 1;
 }
 
 UBaseType_t uxPortDisableInterrupts( void )

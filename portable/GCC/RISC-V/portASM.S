@@ -109,7 +109,8 @@ at the top of this file. */
 .extern xTaskIncrementTick
 .extern Timer_IRQHandler
 .extern pullMachineTimerCompareRegister
-.extern pullNextTime
+.extern pullMachineSoftwareInterruptRegisters
+.extern ullNextTime
 .extern uxTimerIncrementsForOneTick /* size_t type so 32-bit on 32-bit core and 64-bits on 64-bit core. */
 .extern xISRStackTops
 .extern portasmHANDLE_INTERRUPT
@@ -191,7 +192,11 @@ handle_asynchronous:
 	slli t0, t0, __riscv_xlen - 1   /* LSB is already set, shift into MSB.  Shift 31 on 32-bit or 63 on 64-bit cores. */
 	addi t1, t0, 3					/* 0x8000[]0003 == inter-processor interrupt. */
 	bne a0, t1, test_if_mtimer
+	load_x t0, pullMachineSoftwareInterruptRegisters
 	csrr a0, mhartid				/* vTaskSwitchContext takes core ID as parameter */
+	slli t1, a0, 2					/* Multiply core ID by 4 */
+	add t0, t1, t0					/* Add to pullMachineSoftwareInterruptRegisters address */
+	sw x0, 0(t0)					/* Clear software interrupt register in CLINT */
 	jal vTaskSwitchContext
 	j processed_source
 
@@ -203,7 +208,7 @@ test_if_mtimer:						/* If there is a CLINT then the mtimer is used to generate 
 		bne a0, t1, test_if_external_interrupt
 
 		load_x t0, pullMachineTimerCompareRegister  /* Load address of compare register into t0. */
-		load_x t1, pullNextTime  		/* Load the address of ullNextTime into t1. */
+		la t1, ullNextTime				/* Load the address of ullNextTime into t1. */
 
 		#if( __riscv_xlen == 32 )
 
