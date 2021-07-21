@@ -167,7 +167,7 @@ extern void xPortStartFirstTask( void );
 	BaseType_t core = xPortGetCoreId();
 
 	if(core == 0)
-		register_core1((core_function)xPortStartScheduler, NULL);
+		configRUN_ON_SECONDARY_CORES(xPortStartScheduler);
 
 
 	#if( configASSERT_DEFINED == 1 )

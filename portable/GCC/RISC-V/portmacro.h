@@ -33,9 +33,8 @@
 extern "C" {
 #endif
 
-/* Kendryte SDK: */
-#include <entry.h>
-#include <bsp/include/atomic.h>
+/* https://github.com/kendryte/kendryte-standalone-sdk/blob/develop/lib/bsp/include/atomic.h renamed to corelock.h: */
+#include <corelock.h>
 
 /* Std: */
 #include <stdint.h>
