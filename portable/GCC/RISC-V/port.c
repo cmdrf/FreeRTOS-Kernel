@@ -197,23 +197,18 @@ extern void xPortStartFirstTask( void );
 	configure whichever clock is to be used to generate the tick interrupt. */
 	vPortSetupTimerInterrupt();
 
-	#if( ( configMTIME_BASE_ADDRESS != 0 ) && ( configMTIMECMP_BASE_ADDRESS != 0 ) )
+	if( ( configMTIME_BASE_ADDRESS != 0 ) && ( configMTIMECMP_BASE_ADDRESS != 0 ) && core == 0 )
 	{
-		/* Enable mtime and external interrupts.  1<<7 for timer interrupt, 1<<11
+		/* Enable mtime, software and external interrupts.  1<<7 for timer interrupt, 1<<11
 		for external interrupt.  _RB_ What happens here when mtime is not present as
 		with pulpino? */
-		__asm volatile( "csrs mie, %0" :: "r"(0x880) );
+		__asm volatile( "csrs mie, %0" :: "r"(0x888) );
 	}
-	#else
+	else
 	{
-		/* Enable external interrupts. */
-		__asm volatile( "csrs mie, %0" :: "r"(0x800) );
+		/* Enable external interrupts as well as software interrupts for core yield: */
+		__asm volatile( "csrs mie, %0" :: "r"(0x808) );
 	}
-	#endif /* ( configMTIME_BASE_ADDRESS != 0 ) && ( configMTIMECMP_BASE_ADDRESS != 0 ) */
-
-	/* Enable software interrupts for core yield: */
-	__asm volatile( "csrs mie, %0" :: "r"(0x008) );
-
 	xPortStartFirstTask();
 
 	/* Should not get here as after calling xPortStartFirstTask() only tasks
