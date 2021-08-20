@@ -114,6 +114,7 @@ at the top of this file. */
 .extern uxTimerIncrementsForOneTick /* size_t type so 32-bit on 32-bit core and 64-bits on 64-bit core. */
 .extern xISRStackTop
 .extern portasmHANDLE_INTERRUPT
+.extern portasmHANDLE_SOFTWARE_INTERRUPT
 .extern ulIsrEnterCount
 
 /*-----------------------------------------------------------*/
@@ -179,15 +180,18 @@ test_if_asynchronous:
 
 
 handle_asynchronous:
+	addi t0, x0, 1
+	slli t0, t0, __riscv_xlen - 1		/* LSB is already set, shift into MSB.  Shift 31 on 32-bit or 63 on 64-bit cores. */
+	addi t1, t0, 3						/* 0x8000[]0003 == inter-processor interrupt. */
+	bne a0, t1, test_if_mtimer
+	load_x sp, xISRStackTop				/* Switch to ISR stack before function call. */
+	jal portasmHANDLE_SOFTWARE_INTERRUPT	/* Jump to the interrupt handler. */
+	j processed_source
+
+test_if_mtimer:							/* If there is a CLINT then the mtimer is used to generate the tick interrupt. */
 
 #if( portasmHAS_MTIME != 0 )
-
-	test_if_mtimer:						/* If there is a CLINT then the mtimer is used to generate the tick interrupt. */
-
-		addi t0, x0, 1
-
-		slli t0, t0, __riscv_xlen - 1   /* LSB is already set, shift into MSB.  Shift 31 on 32-bit or 63 on 64-bit cores. */
-		addi t1, t0, 7					/* 0x8000[]0007 == machine timer interrupt. */
+		addi t1, t1, 4					/* 0x8000[]0007 == machine timer interrupt. */
 		bne a0, t1, test_if_external_interrupt
 
 		load_x t0, pullMachineTimerCompareRegister  /* Load address of compare register into t0. */
